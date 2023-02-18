@@ -1,0 +1,16 @@
+[listener]
+bind = "127.0.0.1:25577"
+max_connections = 8196
+
+[proxy]
+compression_threshold = 256
+default_server = "lobby"
+max_players = 4000
+online_mode = true
+player_limit = -1
+prevent_proxy_connections = false
+motd = "§dAnother Lure proxy"
+
+[[server]]
+name = "lobby"
+address = "127.0.0.1:25565"
