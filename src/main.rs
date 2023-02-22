@@ -5,8 +5,8 @@ use config::{read_config_from_file, LureConfig};
 use lure::Lure;
 
 mod config;
+mod connection;
 mod lure;
-mod state;
 
 fn get_current_working_dir() -> std::io::Result<PathBuf> {
     env::current_dir()

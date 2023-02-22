@@ -886,12 +886,17 @@ name = "lure"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bevy_ecs",
+ "bytes",
  "mimalloc",
+ "rand",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
  "toml 0.7.2",
+ "tracing",
  "valence",
  "valence_protocol",
 ]
