@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::{env, path::PathBuf};
 
 use config::{read_config_from_file, LureConfig};
@@ -5,12 +6,14 @@ use lure::Lure;
 
 mod config;
 mod lure;
+mod state;
 
 fn get_current_working_dir() -> std::io::Result<PathBuf> {
     env::current_dir()
 }
 
-pub fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let root = get_current_working_dir().unwrap();
     let config_file = root.join("settings.toml");
     let config: LureConfig =
@@ -20,5 +23,6 @@ pub fn main() {
             servers: config::default_servers(),
         });
     let lure = Lure::new(config);
-    lure.start();
+    lure.start().await?;
+    Ok(())
 }

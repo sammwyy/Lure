@@ -9,6 +9,7 @@ edition = "2021"
 anyhow = "1.0.69"
 mimalloc = "0.1.34"
 serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.93"
 thiserror = "1.0.38"
 tokio = { version = "1.25.0", features = ["full", "rt-multi-thread", "tracing"] }
 toml = "0.7.2"
