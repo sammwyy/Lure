@@ -14,4 +14,5 @@ pub struct ClientInfo {
     pub properties: Vec<Property>,
 
     pub protocol_version: i32,
+    pub hostname: String,
 }

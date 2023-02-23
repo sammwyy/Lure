@@ -1,7 +1,10 @@
 use std::fs;
+use std::fs::File;
+use std::io::prelude::*;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use toml::map::Map;
 
 // Listener
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,38 +42,44 @@ pub fn default_proxy() -> ProxyConfig {
     }
 }
 
-// Servers
-#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProxyServer {
-    pub name: String,
-    pub address: String,
+// Hosts
+pub fn default_hosts() -> Map<std::string::String, toml::Value> {
+    let mut hosts = Map::new();
+    hosts.insert("*".to_string(), "lobby".into());
+    return hosts;
 }
 
-pub fn default_servers() -> Vec<ProxyServer> {
-    let mut servers: Vec<ProxyServer> = Vec::new();
-    servers.push(ProxyServer {
-        name: "lobby".to_string(),
-        address: "127.0.0.1:25565".to_string(),
-    });
+// Servers
+pub fn default_servers() -> Map<std::string::String, toml::Value> {
+    let mut servers = Map::new();
+    servers.insert("lobby".to_string(), "127.0.0.1:25565".into());
     return servers;
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LureConfig {
-    #[serde(default = "default_listener")]
     pub listener: ListenerConfig,
-
-    #[serde(default = "default_proxy")]
     pub proxy: ProxyConfig,
-
-    #[serde(default = "default_servers")]
-    pub servers: Vec<ProxyServer>,
+    pub hosts: Map<std::string::String, toml::Value>,
+    pub servers: Map<std::string::String, toml::Value>,
 }
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("{0}")]
     IO(#[from] std::io::Error),
+}
+
+pub fn config_to_str(config: LureConfig) -> String {
+    let raw = toml::to_string(&config).unwrap();
+    return raw;
+}
+
+pub fn save_config_to_file(config: LureConfig, file_path: &str) -> String {
+    let raw = config_to_str(config);
+    let mut file = File::create(file_path).unwrap();
+    file.write_all(raw.as_bytes()).unwrap();
+    return raw;
 }
 
 pub fn read_config_from_str(string: &str) -> Result<LureConfig, ConfigError> {

@@ -2,6 +2,7 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use anyhow::{bail, Ok};
 use serde_json::json;
 
 use sha2::{Digest, Sha256};
@@ -35,6 +36,34 @@ impl Lure {
         Lure { config }
     }
 
+    pub fn get_default_server(&self, hostname: String) -> Option<String> {
+        let hosts = self.config.hosts.clone();
+
+        let host = if hosts.contains_key(hostname.as_str()) {
+            hosts.get(hostname.as_str())
+        } else {
+            hosts.get("*")
+        };
+
+        if host.is_none() {
+            return None;
+        }
+
+        let default_server = host.unwrap().as_str();
+        return Some(default_server.unwrap().to_string());
+    }
+
+    pub fn get_server(&self, name: String) -> Option<String> {
+        let servers = self.config.servers.clone();
+        let server = servers.get(&name);
+        if server.is_none() {
+            return None;
+        }
+
+        let result = server.unwrap().to_string();
+        return Some(result);
+    }
+
     pub async fn start(self) -> Result<(), Box<dyn Error>> {
         // Listener Config
         let listener_cfg = self.config.listener.to_owned();
@@ -46,7 +75,7 @@ impl Lure {
         let listener = TcpListener::bind(address).await?;
         let semaphore = Arc::new(Semaphore::new(max_connections));
 
-        while let Ok(permit) = semaphore.clone().acquire_owned().await {
+        while let core::result::Result::Ok(permit) = semaphore.clone().acquire_owned().await {
             let (client, remote_client_addr) = listener.accept().await?;
             eprintln!("Accepted connection to {remote_client_addr}");
 
@@ -67,7 +96,7 @@ impl Lure {
         }
 
         println!("Starting Lure server.");
-        Ok(())
+        core::result::Result::Ok(())
     }
 
     pub async fn handle_connection(
@@ -78,7 +107,7 @@ impl Lure {
         // Client state
         let (client_read, client_write) = client_socket.into_split();
 
-        let mut connection = Connection {
+        let connection = Connection {
             address,
             enc: PacketEncoder::new(),
             dec: PacketDecoder::new(),
@@ -87,6 +116,11 @@ impl Lure {
             buf: String::new(),
         };
 
+        self.handle_handshake(connection).await?;
+        Ok(())
+    }
+
+    pub async fn handle_handshake(&self, mut connection: Connection) -> anyhow::Result<()> {
         // Wait for initial handshake.
         let handshake: HandshakeOwned = connection.recv().await?;
         match handshake.next_state {
@@ -165,6 +199,7 @@ impl Lure {
         };
 
         info.protocol_version = handshake.protocol_version.0;
+        info.hostname = handshake.server_address;
 
         if compression > 0 {
             client
@@ -197,6 +232,7 @@ impl Lure {
             properties: vec![],
             ip: client.address.ip(),
             protocol_version: 0,
+            hostname: "".to_string(),
         })
     }
 
@@ -211,12 +247,58 @@ impl Lure {
             properties: vec![],
             ip: client.address.ip(),
             protocol_version: 0,
+            hostname: "".to_string(),
         })
     }
 
-    pub async fn handle_play(&self, client: Connection, info: ClientInfo) -> anyhow::Result<()> {
-        let server_address: SocketAddr = "127.0.0.1:25566".parse().to_owned()?;
-        let server_stream = TcpStream::connect(server_address).await?;
+    pub async fn handle_play(
+        &self,
+        mut client: Connection,
+        info: ClientInfo,
+    ) -> anyhow::Result<()> {
+        let default_server = self.get_default_server(info.hostname.clone());
+
+        if default_server.is_none() {
+            client
+                .disconnect("No host found".into_text().color(Color::RED))
+                .await?;
+            bail!("No host found");
+        }
+
+        let default_server_addr = self.get_server(default_server.clone().unwrap());
+
+        if default_server_addr.is_none() {
+            let error = format!(
+                "Default server {} for host {} doesnt exist.",
+                default_server.clone().unwrap(),
+                info.hostname.clone()
+            );
+            client
+                .disconnect(error.clone().into_text().color(Color::RED))
+                .await?;
+            bail!(error);
+        }
+
+        let server_address: SocketAddr = default_server_addr
+            .unwrap()
+            .replace("\"", "")
+            .parse()
+            .to_owned()?;
+        let connect_result = TcpStream::connect(server_address).await;
+
+        if connect_result.is_err() {
+            let error = format!(
+                "Cannot connect to server {}:\n\n{}",
+                default_server.unwrap(),
+                connect_result.err().unwrap()
+            );
+            client
+                .disconnect(error.clone().into_text().color(Color::RED))
+                .await?;
+            bail!(error);
+        }
+
+        let server_stream = connect_result.unwrap();
 
         if let Err(e) = server_stream.set_nodelay(true) {
             eprintln!("Failed to set TCP_NODELAY: {e}");

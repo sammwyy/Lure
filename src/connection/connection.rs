@@ -6,7 +6,8 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::time::timeout;
-use valence_protocol::{DecodePacket, EncodePacket};
+use valence_protocol::packets::s2c::play::DisconnectPlay;
+use valence_protocol::{DecodePacket, EncodePacket, Text};
 
 use super::codec::{PacketDecoder, PacketEncoder};
 
@@ -28,6 +29,13 @@ impl Connection {
         self.dec.enable_encryption(key);
     }
     */
+    pub async fn disconnect(&mut self, reason: Text) -> anyhow::Result<()> {
+        let kick = DisconnectPlay {
+            reason: reason.into(),
+        };
+        self.send(&kick).await?;
+        Ok(())
+    }
 
     pub async fn set_compression(&mut self, threshold: u32) -> anyhow::Result<()> {
         self.dec.set_compression(true);
