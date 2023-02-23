@@ -1,6 +1,9 @@
-# Lure
+<p align=center>
+  <img src="https://github.com/sammwyy/Lure/raw/main/assets/default_icon.png"/>
+<p>
 
-The true next-gen L7 minecraft proxy and load balancer. Built in Rust, Tokio and Valence.
+<h1 align=center>Lure</h1>
+<p align=center>The true next-gen L7 minecraft proxy and load balancer. Built in Rust, Tokio and Valence.</p>
 
 ## Why?
 
