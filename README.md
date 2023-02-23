@@ -32,16 +32,16 @@ Lure came along to fix that.
 
 ## ⚙️ Development
 
-- 1. Clone this repository.
-- 2. Install Rust and Cargo.
+1. Clone this repository.
+2. Install Rust and Cargo.
 
 ### 🧪 Debug mode
 
-- 3. Run `cargo run` in your terminal.
+3. Run `cargo run` in your terminal.
 
 ### 📦 Build
 
-- 3. Run `cargo build --release` in your terminal.
+3. Run `cargo build --release` in your terminal.
 
 ## 🤝 Contributing
 
