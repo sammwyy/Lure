@@ -12,4 +12,6 @@ pub struct ClientInfo {
     /// The client's properties from the game profile. Typically contains a
     /// `textures` property with the skin and cape of the player.
     pub properties: Vec<Property>,
+
+    pub protocol_version: i32,
 }

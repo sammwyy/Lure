@@ -5,11 +5,10 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::sync::OwnedSemaphorePermit;
 use tokio::time::timeout;
+use valence_protocol::{DecodePacket, EncodePacket};
 
-use valence_protocol::packets::s2c::login::SetCompression;
-use valence_protocol::{DecodePacket, EncodePacket, PacketDecoder, PacketEncoder, VarInt};
+use super::codec::{PacketDecoder, PacketEncoder};
 
 const READ_BUF_SIZE: usize = 4096;
 
@@ -20,7 +19,6 @@ pub struct Connection {
     pub read: OwnedReadHalf,
     pub write: OwnedWriteHalf,
     pub buf: String,
-    pub permit: OwnedSemaphorePermit,
 }
 
 impl Connection {
@@ -32,11 +30,6 @@ impl Connection {
     */
 
     pub async fn set_compression(&mut self, threshold: u32) -> anyhow::Result<()> {
-        self.send(&SetCompression {
-            threshold: VarInt(threshold as i32),
-        })
-        .await?;
-
         self.dec.set_compression(true);
         self.enc.set_compression(Some(threshold));
         Ok(())
@@ -70,6 +63,32 @@ impl Connection {
         self.enc.append_packet(pkt)?;
         let bytes = self.enc.take();
         timeout(Duration::from_millis(5000), self.write.write_all(&bytes)).await??;
+        Ok(())
+    }
+
+    pub async fn pipe<'a, P>(&'a mut self) -> anyhow::Result<()>
+    where
+        P: DecodePacket<'a> + EncodePacket,
+    {
+        while !self.dec.has_next_packet()? {
+            self.dec.reserve(4096);
+            let mut buf = self.dec.take_capacity();
+
+            if self.read.read_buf(&mut buf).await? == 0 {
+                return Err(io::Error::from(ErrorKind::UnexpectedEof).into());
+            }
+
+            self.dec.queue_bytes(buf);
+        }
+
+        let pkt: P = self.dec.try_next_packet()?.unwrap();
+        self.enc.append_packet(&pkt)?;
+
+        let bytes = self.enc.take();
+        self.write.write_all(&bytes).await?;
+
+        self.buf.clear();
+
         Ok(())
     }
 }

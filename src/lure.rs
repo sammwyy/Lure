@@ -1,25 +1,28 @@
 use std::error::Error;
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use serde_json::json;
 
 use sha2::{Digest, Sha256};
 
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Semaphore;
 
+use tokio::task::JoinHandle;
 use valence::prelude::*;
-use valence_protocol::packets::c2s::handshake::HandshakeOwned;
+use valence_protocol::packets::c2s::handshake::{Handshake, HandshakeOwned};
 use valence_protocol::packets::c2s::login::LoginStart;
 use valence_protocol::packets::c2s::status::{PingRequest, StatusRequest};
-use valence_protocol::packets::s2c::login::LoginSuccess;
-use valence_protocol::packets::s2c::play::DisconnectPlay;
+use valence_protocol::packets::s2c::login::{LoginSuccess, SetCompression};
 use valence_protocol::packets::s2c::status::{PingResponse, StatusResponse};
+use valence_protocol::packets::{C2sPlayPacket, S2cPlayPacket};
 use valence_protocol::types::HandshakeNextState;
-use valence_protocol::{PacketDecoder, PacketEncoder};
+use valence_protocol::VarInt;
 
 use crate::config::LureConfig;
 use crate::connection::client_info::ClientInfo;
+use crate::connection::codec::{PacketDecoder, PacketEncoder};
 use crate::connection::connection::Connection;
 
 #[derive(Clone, Debug)]
@@ -52,13 +55,8 @@ impl Lure {
             }
 
             let lure = self.clone();
-            let client_sema = semaphore.clone().acquire_owned().await?;
-
             tokio::spawn(async move {
-                if let Err(e) = lure
-                    .handle_connection(client, remote_client_addr, client_sema)
-                    .await
-                {
+                if let Err(e) = lure.handle_connection(client, remote_client_addr).await {
                     eprintln!("Connection to {remote_client_addr} ended with: {e:#}");
                 } else {
                     eprintln!("Connection to {remote_client_addr} ended.");
@@ -76,7 +74,6 @@ impl Lure {
         &self,
         client_socket: TcpStream,
         address: SocketAddr,
-        semaphore: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
         // Client state
         let (client_read, client_write) = client_socket.into_split();
@@ -88,17 +85,17 @@ impl Lure {
             read: client_read,
             write: client_write,
             buf: String::new(),
-            permit: semaphore,
         };
 
         // Wait for initial handshake.
         let handshake: HandshakeOwned = connection.recv().await?;
         match handshake.next_state {
             HandshakeNextState::Status => self.handle_status(&mut connection, handshake).await,
-            HandshakeNextState::Login => match self.handle_login(&mut connection).await? {
+            HandshakeNextState::Login => match self.handle_login(&mut connection, handshake).await?
+            {
                 Some(info) => {
                     // let mut client = connection.into_client(info, 2097152, 8388608);
-                    self.handle_play(&mut connection, info).await?;
+                    self.handle_play(connection, info).await?;
                     Ok(())
                 }
                 None => Ok(()),
@@ -149,6 +146,7 @@ impl Lure {
     pub async fn handle_login(
         &self,
         client: &mut Connection,
+        handshake: HandshakeOwned,
     ) -> anyhow::Result<Option<ClientInfo>> {
         let proxy_config = self.config.proxy.to_owned();
         let online_mode = proxy_config.online_mode;
@@ -160,13 +158,20 @@ impl Lure {
         } = client.recv::<LoginStart>().await?;
 
         let username = username.to_owned_username();
-        let info = if online_mode {
+        let mut info = if online_mode {
             self.login_online(client, username).await?
         } else {
             self.login_offline(client, username).await?
         };
 
+        info.protocol_version = handshake.protocol_version.0;
+
         if compression > 0 {
+            client
+                .send(&SetCompression {
+                    threshold: VarInt(compression as i32),
+                })
+                .await?;
             client.set_compression(compression).await?;
         }
 
@@ -191,6 +196,7 @@ impl Lure {
             username,
             properties: vec![],
             ip: client.address.ip(),
+            protocol_version: 0,
         })
     }
 
@@ -204,20 +210,84 @@ impl Lure {
             username,
             properties: vec![],
             ip: client.address.ip(),
+            protocol_version: 0,
         })
     }
 
-    pub async fn handle_play(
-        &self,
-        client: &mut Connection,
-        info: ClientInfo,
-    ) -> anyhow::Result<()> {
-        client
-            .send(&DisconnectPlay {
-                reason: Text::from(info.username).into(),
+    pub async fn handle_play(&self, client: Connection, info: ClientInfo) -> anyhow::Result<()> {
+        let server_address: SocketAddr = "127.0.0.1:25566".parse().to_owned()?;
+        let server_stream = TcpStream::connect(server_address).await?;
+
+        if let Err(e) = server_stream.set_nodelay(true) {
+            eprintln!("Failed to set TCP_NODELAY: {e}");
+        }
+
+        let (server_read, server_write) = server_stream.into_split();
+
+        let mut server = Connection {
+            address: server_address,
+            enc: PacketEncoder::new(),
+            dec: PacketDecoder::new(),
+            read: server_read,
+            write: server_write,
+            buf: String::new(),
+        };
+
+        server
+            .send(&Handshake {
+                next_state: HandshakeNextState::Login,
+                protocol_version: VarInt::from(info.protocol_version),
+                server_address: &server_address.ip().to_string(),
+                server_port: server_address.port(),
             })
             .await?;
 
-        Ok(())
+        server
+            .send(&LoginStart {
+                profile_id: Some(info.uuid),
+                username: info.username.as_str_username(),
+            })
+            .await?;
+
+        let compression_result = server.recv::<SetCompression>().await?;
+        server
+            .set_compression(compression_result.threshold.0 as u32)
+            .await?;
+        server.recv::<LoginSuccess>().await?;
+
+        let mut client_to_server = Connection {
+            address: client.address.clone(),
+            buf: client.buf.clone(),
+            dec: client.dec,
+            enc: server.enc,
+            read: client.read,
+            write: server.write,
+        };
+
+        let mut server_to_client = Connection {
+            address: server_address.clone(),
+            dec: server.dec,
+            enc: client.enc,
+            read: server.read,
+            write: client.write,
+            buf: String::new(),
+        };
+
+        let c2s_fut: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
+            loop {
+                client_to_server.pipe::<C2sPlayPacket>().await?;
+            }
+        });
+
+        let s2c_fut = async move {
+            loop {
+                server_to_client.pipe::<S2cPlayPacket>().await?;
+            }
+        };
+
+        tokio::select! {
+            c2s = c2s_fut => Ok(c2s??),
+            s2c = s2c_fut => s2c,
+        }
     }
 }

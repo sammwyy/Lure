@@ -888,6 +888,7 @@ dependencies = [
  "anyhow",
  "bevy_ecs",
  "bytes",
+ "flate2",
  "mimalloc",
  "rand",
  "serde",
