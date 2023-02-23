@@ -1,5 +1,5 @@
 <p align=center>
-  <img src="https://github.com/sammwyy/Lure/raw/main/assets/default_icon.png"/>
+  <img src="https://github.com/sammwyy/Lure/raw/main/assets/icon@64.png"/>
 <p>
 
 <h1 align=center>Lure</h1>
