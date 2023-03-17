@@ -1,8 +1,12 @@
 use std::error::Error;
+use std::fs;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{bail, Ok};
+use base64::Engine;
+use base64::engine::general_purpose;
 use serde_json::json;
 
 use sha2::{Digest, Sha256};
@@ -62,6 +66,25 @@ impl Lure {
 
         let result = server.unwrap().to_string();
         return Some(result);
+    }
+
+    pub fn get_favicon(&self) -> Option<String> {
+        let favicon = &self.config.proxy.favicon;
+        let favicon_file = PathBuf::from(favicon);
+
+        if !favicon_file.exists() {
+            return None;
+        }
+
+        let favicon = fs::read(favicon_file).unwrap();
+        let favicon_meta = image_meta::load_from_buf(&favicon).unwrap();
+
+        if favicon_meta.dimensions.width != 64 || favicon_meta.dimensions.height != 64 { return None };
+
+        let mut buf = "data:image/png;base64,".to_string();
+        general_purpose::STANDARD.encode_string(favicon, &mut buf);
+
+        Some(buf)
     }
 
     pub async fn start(self) -> Result<(), Box<dyn Error>> {
@@ -148,6 +171,7 @@ impl Lure {
         let max_players = proxy.max_players;
         let motd: Text = proxy.motd.into();
         let protocol = handshake.protocol_version.0;
+        let favicon = if let Some(favicon) = self.get_favicon() { favicon } else { "".to_string() };
 
         let json = json!({
             "version": {
@@ -163,7 +187,7 @@ impl Lure {
                 }],
             },
             "description": motd,
-            "favicon": ""
+            "favicon": favicon
         });
 
         client

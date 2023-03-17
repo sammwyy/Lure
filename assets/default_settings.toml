@@ -9,6 +9,7 @@ online_mode = true
 player_limit = -1
 prevent_proxy_connections = false
 motd = "§dAnother Lure proxy"
+favicon = "server-icon.png"
 
 [hosts]
 "*" = "lobby"

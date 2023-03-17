@@ -29,6 +29,7 @@ pub struct ProxyConfig {
     pub player_limit: i32,
     pub prevent_proxy_connections: bool,
     pub motd: String,
+    pub favicon: String,
 }
 
 pub fn default_proxy() -> ProxyConfig {
@@ -39,6 +40,7 @@ pub fn default_proxy() -> ProxyConfig {
         player_limit: -1,
         prevent_proxy_connections: false,
         motd: "§dAnother Lure proxy".to_string(),
+        favicon: "server-icon.png".to_string(),
     }
 }
 
