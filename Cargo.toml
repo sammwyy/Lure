@@ -7,9 +7,11 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.69"
+base64 = "0.21.0"
 bevy_ecs = "0.9.1"
 bytes = "1.4.0"
 flate2 = "1.0.25"
+image-meta = "0.1.2"
 mimalloc = "0.1.34"
 rand = "0.8.5"
 serde = { version = "1.0.152", features = ["derive"] }
