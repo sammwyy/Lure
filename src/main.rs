@@ -1,12 +1,14 @@
+mod config;
+mod connection;
+mod keypair;
+mod lure;
+mod utils;
+
 use std::error::Error;
 use std::{env, path::PathBuf};
 
 use config::{read_config_from_file, save_config_to_file, LureConfig};
 use lure::Lure;
-
-mod config;
-mod connection;
-mod lure;
 
 fn get_current_working_dir() -> std::io::Result<PathBuf> {
     env::current_dir()
@@ -29,7 +31,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         save_config_to_file(config.clone(), config_file.to_str().unwrap());
     }
 
-    let lure = Lure::new(config);
+    let mut lure = Lure::new(config);
     lure.start().await?;
     Ok(())
 }

@@ -1,18 +1,41 @@
 [listener]
+# Hostname and port where Lure will listen for connections.
 bind = "127.0.0.1:25577"
+
+# Maximum connections allowed on the TCP socket.
 max_connections = 8196
 
 [proxy]
+# Packet compression between client and server (-1 to disable)
 compression_threshold = 256
+
+# Maximum players to show (visual only, does not impose any real limit)
 max_players = 4000
+
+# Use Mojang authentication. Warning: if you disable it, cracked players will be able to enter.
 online_mode = true
+
+# Maximum number of players in the proxy (-1 for infinity)
 player_limit = -1
+
+# Strategy to send the player's data, as well as the real IP to the backend servers.
+# none       = Do not send.
+# bungeecord = Use the same format as bungeecord.
+player_forward_mode = "bungeecord"
+
+# Verify that the player's IP is the same with which the launcher started the session. Prevents some proxies and VPNs.
 prevent_proxy_connections = false
+
+# Message that will be shown to the players in the list of servers.
 motd = "§dAnother Lure proxy"
+
+# File with the server's icon.
 favicon = "server-icon.png"
 
+# Default server to which the player will be sent. You can also define one for each different domain.
 [hosts]
 "*" = "lobby"
 
+# Backend servers to which the players will be sent.
 [servers]
 lobby = "127.0.0.1:25565"

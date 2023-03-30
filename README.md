@@ -7,24 +7,24 @@
 
 ## Why?
 
-Rust is a powerful programming language and a great development environment with a large and growing ecosystem. The efficiency of the applications built in it is such that several companies are moving their products to this technology.  
+Rust is a powerful programming language and a great development environment with a large and growing ecosystem. The efficiency of the applications built in it is such that several companies are moving their products to this technology.
 
-Proxies built in Java store too much player data in memory. They have unneeded functions and complex API systems that in the end make a simple proxy whose job is to carry packets from one point to another become an entire server.  
+Proxies built in Java store too much player data in memory. They have unneeded functions and complex API systems that in the end make a simple proxy whose job is to carry packets from one point to another become an entire server.
 
-Lure came along to fix that.  
+Lure came along to fix that.
 
 ## 📝 To Do
 
 - [X] Configuration system.
 - [X] MoTD.
-- [ ] Favicon.
+- [X] Favicon.
 - [X] Proxy client to a server.
 - [X] Multiple servers.
 - [X] Multiple hosts.
 - [X] Compression.
-- [ ] Online mode.
+- [X] Online mode.
 - [ ] Player limit.
-- [ ] IP Forwarding.
+- [X] IP Forwarding.
 - [ ] Switch between servers.
 - [ ] Plugin channels.
 - [ ] Internal Commands.
@@ -58,5 +58,5 @@ Or buy me a coffee-latte 🙌🏾
 
 ## 📝 License
 
-Copyright © 2023 [Sammwy](https://github.com/sammwyy).  
+Copyright © 2023 [Sammwy](https://github.com/sammwyy).
 This project is [MIT](LICENSE) licensed.

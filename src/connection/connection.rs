@@ -23,12 +23,11 @@ pub struct Connection {
 }
 
 impl Connection {
-    /*
     pub fn enable_encryption(&mut self, key: &[u8; 16]) {
         self.enc.enable_encryption(key);
         self.dec.enable_encryption(key);
     }
-    */
+
     pub async fn disconnect(&mut self, reason: Text) -> anyhow::Result<()> {
         let kick = DisconnectPlay {
             reason: reason.into(),

@@ -1,43 +1,73 @@
+use std::borrow::Cow;
 use std::error::Error;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{bail, Ok};
-use base64::Engine;
+use anyhow::{bail, ensure, Context, Ok};
+
 use base64::engine::general_purpose;
+use base64::Engine;
+
+use num::BigInt;
+
+use reqwest::StatusCode;
+use rsa::Pkcs1v15Encrypt;
+
+use serde::Deserialize;
 use serde_json::json;
 
+use sha1::digest::Update;
+use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 
 use tokio::task::JoinHandle;
+
 use valence::prelude::*;
+
 use valence_protocol::packets::c2s::handshake::{Handshake, HandshakeOwned};
-use valence_protocol::packets::c2s::login::LoginStart;
+use valence_protocol::packets::c2s::login::{EncryptionResponse, LoginStart};
 use valence_protocol::packets::c2s::status::{PingRequest, StatusRequest};
-use valence_protocol::packets::s2c::login::{LoginSuccess, SetCompression};
+use valence_protocol::packets::s2c::login::{
+    DisconnectLogin, EncryptionRequest, LoginSuccess, SetCompression,
+};
 use valence_protocol::packets::s2c::status::{PingResponse, StatusResponse};
 use valence_protocol::packets::{C2sPlayPacket, S2cPlayPacket};
-use valence_protocol::types::HandshakeNextState;
-use valence_protocol::VarInt;
+use valence_protocol::types::{HandshakeNextState, Property};
+use valence_protocol::{translation_key, VarInt};
 
 use crate::config::LureConfig;
 use crate::connection::client_info::ClientInfo;
 use crate::connection::codec::{PacketDecoder, PacketEncoder};
 use crate::connection::connection::Connection;
+use crate::keypair::KeyPair;
+use crate::utils::read_favicon;
+
+#[derive(Debug, Deserialize)]
+pub struct GameProfile {
+    id: Uuid,
+    name: Username<String>,
+    properties: Vec<Property>,
+}
 
 #[derive(Clone, Debug)]
 pub struct Lure {
     config: LureConfig,
+    favicon: Option<String>,
+    keypair: KeyPair,
 }
 
 impl Lure {
     pub fn new(config: LureConfig) -> Lure {
-        Lure { config }
+        Lure {
+            config,
+            favicon: None,
+            keypair: KeyPair::new(),
+        }
     }
 
     pub fn get_default_server(&self, hostname: String) -> Option<String> {
@@ -79,7 +109,9 @@ impl Lure {
         let favicon = fs::read(favicon_file).unwrap();
         let favicon_meta = image_meta::load_from_buf(&favicon).unwrap();
 
-        if favicon_meta.dimensions.width != 64 || favicon_meta.dimensions.height != 64 { return None };
+        if favicon_meta.dimensions.width != 64 || favicon_meta.dimensions.height != 64 {
+            return None;
+        };
 
         let mut buf = "data:image/png;base64,".to_string();
         general_purpose::STANDARD.encode_string(favicon, &mut buf);
@@ -87,12 +119,17 @@ impl Lure {
         Some(buf)
     }
 
-    pub async fn start(self) -> Result<(), Box<dyn Error>> {
-        // Listener Config
+    pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
+        // Listener config.
         let listener_cfg = self.config.listener.to_owned();
         println!("Preparing socket {}", listener_cfg.bind);
         let address: SocketAddr = listener_cfg.bind.parse().unwrap();
         let max_connections = listener_cfg.max_connections;
+
+        // Load favicon.
+        let proxy_cfg = self.config.proxy.to_owned();
+        let favicon_path = proxy_cfg.favicon;
+        self.favicon = read_favicon(favicon_path);
 
         // Start server.
         let listener = TcpListener::bind(address).await?;
@@ -171,7 +208,11 @@ impl Lure {
         let max_players = proxy.max_players;
         let motd: Text = proxy.motd.into();
         let protocol = handshake.protocol_version.0;
-        let favicon = if let Some(favicon) = self.get_favicon() { favicon } else { "".to_string() };
+        let favicon = if let Some(favicon) = self.get_favicon() {
+            favicon
+        } else {
+            "".to_string()
+        };
 
         let json = json!({
             "version": {
@@ -238,7 +279,7 @@ impl Lure {
             .send(&LoginSuccess {
                 uuid: info.uuid,
                 username: info.username.as_str_username(),
-                properties: Default::default(),
+                properties: Cow::from(&info.properties),
             })
             .await?;
 
@@ -250,10 +291,85 @@ impl Lure {
         client: &mut Connection,
         username: Username<String>,
     ) -> anyhow::Result<ClientInfo> {
+        let server_verify_token: [u8; 16] = rand::random();
+
+        client
+            .send(&EncryptionRequest {
+                server_id: "", // Always empty
+                public_key: &self.keypair.public_key,
+                verify_token: &server_verify_token,
+            })
+            .await?;
+
+        let response = client.recv::<EncryptionResponse>().await?;
+
+        let shared_secret = self
+            .keypair
+            .private_key
+            .decrypt(Pkcs1v15Encrypt, response.shared_secret)?;
+
+        let verify_token = self
+            .keypair
+            .private_key
+            .decrypt(Pkcs1v15Encrypt, response.verify_token)
+            .context("Failed to validate session")?;
+
+        ensure!(
+            server_verify_token.as_slice() == verify_token,
+            "Failed to validate session, token mismatch."
+        );
+
+        let encryption_key: [u8; 16] = shared_secret
+            .as_slice()
+            .try_into()
+            .context("Failed to validate session, shared secret length mismatch.")?;
+
+        client.enable_encryption(&encryption_key);
+
+        let hash = Sha1::new()
+            .chain(&shared_secret)
+            .chain(&self.keypair.public_key)
+            .finalize();
+
+        let auth_digest = BigInt::from_signed_bytes_be(&hash).to_str_radix(16);
+        let player_ip = client.address.ip();
+
+        let url = match self.config.proxy.prevent_proxy_connections {
+            true => format!("https://sessionserver.mojang.com/session/minecraft/hasJoined?username={username}&serverId={auth_digest}&ip={player_ip}"),
+            false => format!("https://sessionserver.mojang.com/session/minecraft/hasJoined?username={username}&serverId={auth_digest}")
+        };
+
+        let mojang_resp = reqwest::get(url).await?;
+
+        match mojang_resp.status() {
+            StatusCode::OK => {}
+            StatusCode::NO_CONTENT => {
+                let reason = Text::translate(
+                    translation_key::MULTIPLAYER_DISCONNECT_UNVERIFIED_USERNAME,
+                    [],
+                );
+                client
+                    .send(&DisconnectLogin {
+                        reason: reason.into(),
+                    })
+                    .await?;
+                bail!("session server could not verify username");
+            }
+            status => {
+                bail!("session server GET request failed (status code {status})");
+            }
+        }
+
+        let profile = mojang_resp
+            .json::<GameProfile>()
+            .await
+            .context("parsing game profile")?;
+        ensure!(profile.name == username, "usernames do not match");
+
         Ok(ClientInfo {
-            uuid: Uuid::from_slice(&Sha256::digest(username.as_str())[..16])?,
+            uuid: profile.id,
             username,
-            properties: vec![],
+            properties: profile.properties,
             ip: client.address.ip(),
             protocol_version: 0,
             hostname: "".to_string(),
@@ -339,11 +455,22 @@ impl Lure {
             buf: String::new(),
         };
 
+        let handshake_server_address = match self.config.proxy.player_forward_mode.as_str() {
+            "bungeecord" => format!(
+                "{}\0{}\0{}\0{}",
+                server_address.ip().to_string(),
+                client.address.to_string().split(":").next().unwrap(),
+                info.uuid,
+                serde_json::to_string(&info.properties)?
+            ),
+            &_ => server_address.ip().to_string(),
+        };
+
         server
             .send(&Handshake {
                 next_state: HandshakeNextState::Login,
                 protocol_version: VarInt::from(info.protocol_version),
-                server_address: &server_address.ip().to_string(),
+                server_address: &handshake_server_address,
                 server_port: server_address.port(),
             })
             .await?;

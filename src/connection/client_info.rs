@@ -2,6 +2,7 @@ use std::net::IpAddr;
 
 use valence_protocol::{types::Property, Username, Uuid};
 
+#[derive(Clone)]
 pub struct ClientInfo {
     /// The username of the new client.
     pub username: Username<String>,

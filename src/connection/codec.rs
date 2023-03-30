@@ -1,4 +1,3 @@
-#[cfg(feature = "encryption")]
 use aes::cipher::{AsyncStreamCipher, NewCipher};
 use anyhow::{bail, ensure};
 use bytes::{Buf, BufMut, BytesMut};
@@ -7,17 +6,13 @@ use tracing::debug;
 use valence_protocol::var_int::{VarInt, VarIntDecodeError};
 use valence_protocol::{Decode, DecodePacket, Encode, EncodePacket, Result, MAX_PACKET_SIZE};
 
-/// The AES block cipher with a 128 bit key, using the CFB-8 mode of
-/// operation.
-#[cfg(feature = "encryption")]
 type Cipher = cfb8::Cfb8<aes::Aes128>;
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct PacketEncoder {
     pub buf: BytesMut,
     pub compress_buf: Vec<u8>,
     pub compression_threshold: Option<u32>,
-    #[cfg(feature = "encryption")]
     pub cipher: Option<Cipher>,
 }
 
@@ -140,7 +135,6 @@ impl PacketEncoder {
     /// Takes all the packets written so far and encrypts them if encryption is
     /// enabled.
     pub fn take(&mut self) -> BytesMut {
-        #[cfg(feature = "encryption")]
         if let Some(cipher) = &mut self.cipher {
             cipher.encrypt(&mut self.buf);
         }
@@ -160,7 +154,6 @@ impl PacketEncoder {
     /// not been [taken] yet.**
     ///
     /// [taken]: Self::take
-    #[cfg(feature = "encryption")]
     pub fn enable_encryption(&mut self, key: &[u8; 16]) {
         assert!(self.cipher.is_none(), "encryption is already enabled");
         self.cipher = Some(NewCipher::new(key.into(), key.into()));
@@ -263,13 +256,13 @@ where
     Ok(())
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct PacketDecoder {
     pub buf: BytesMut,
     pub cursor: usize,
     pub decompress_buf: Vec<u8>,
     pub compression_enabled: bool,
-    // pub cipher: Option<Cipher>,
+    pub cipher: Option<Cipher>,
 }
 
 impl PacketDecoder {
@@ -356,7 +349,6 @@ impl PacketDecoder {
     where
         P: DecodePacket<'a>,
     {
-        #[cfg(feature = "encryption")]
         assert!(
             self.cipher.is_none(),
             "encryption must be disabled to use this method"
@@ -430,7 +422,6 @@ impl PacketDecoder {
         self.compression_enabled = enabled;
     }
 
-    #[cfg(feature = "encryption")]
     pub fn enable_encryption(&mut self, key: &[u8; 16]) {
         assert!(self.cipher.is_none(), "encryption is already enabled");
 
@@ -443,7 +434,6 @@ impl PacketDecoder {
     pub fn queue_bytes(&mut self, mut bytes: BytesMut) {
         #![allow(unused_mut)]
 
-        #[cfg(feature = "encryption")]
         if let Some(cipher) = &mut self.cipher {
             cipher.decrypt(&mut bytes);
         }
@@ -452,12 +442,10 @@ impl PacketDecoder {
     }
 
     pub fn queue_slice(&mut self, bytes: &[u8]) {
-        #[cfg(feature = "encryption")]
         let len = self.buf.len();
 
         self.buf.extend_from_slice(bytes);
 
-        #[cfg(feature = "encryption")]
         if let Some(cipher) = &mut self.cipher {
             cipher.decrypt(&mut self.buf[len..]);
         }
