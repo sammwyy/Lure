@@ -4,34 +4,44 @@ mod keypair;
 mod lure;
 mod utils;
 
+use anyhow::anyhow;
 use std::error::Error;
-use std::{env, path::PathBuf};
+use std::{env};
 
-use config::{read_config_from_file, save_config_to_file, LureConfig};
+use config::LureConfig;
 use lure::Lure;
 
-fn get_current_working_dir() -> std::io::Result<PathBuf> {
-    env::current_dir()
-}
+use crate::config::LureConfigLoadError;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let root = get_current_working_dir().unwrap();
-    let config_file = root.join("settings.toml");
-    let config: LureConfig =
-        read_config_from_file(config_file.to_str().unwrap()).unwrap_or(LureConfig {
-            listener: config::default_listener(),
-            proxy: config::default_proxy(),
-            hosts: config::default_hosts(),
-            servers: config::default_servers(),
-        });
+    let current_dir = env::current_dir()?;
+    let config_file = current_dir.join("settings.toml");
+    let config_file_path = config_file.to_str().ok_or(anyhow!("Failed to get config file path"))?;
 
-    println!("{}", config_file.to_str().unwrap());
-    if !config_file.exists() {
-        save_config_to_file(config.clone(), config_file.to_str().unwrap());
-    }
+    println!("{}", config_file_path);
 
-    let mut lure = Lure::new(config);
+    let config = match LureConfig::load(config_file_path) {
+        Ok(config) => {
+            // Save config to fill missing fields
+            let _ = config.save(config_file_path);
+            Ok(config)
+        },
+        Err(error) => {
+            match error {
+                LureConfigLoadError::Io(_) => {
+                    // If config loading fails we generate a default config
+                    let default_config = LureConfig::default();
+                    // Save the config to disk
+                    let _ = default_config.save(config_file_path);
+                    Ok(default_config)
+                },
+                LureConfigLoadError::Parse(parse_error) => Err(parse_error)
+            }
+        },
+    };
+
+    let mut lure = Lure::new(config?);
     lure.start().await?;
     Ok(())
 }
