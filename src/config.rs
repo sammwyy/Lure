@@ -49,7 +49,6 @@ impl Default for ProxyConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct LureConfig {
     #[serde(default)]
     pub listener: ListenerConfig,

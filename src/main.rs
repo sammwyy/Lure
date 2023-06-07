@@ -22,7 +22,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("{}", config_file_path);
 
     let config = match LureConfig::load(config_file_path) {
-        Ok(config) => Ok(config),
+        Ok(config) => {
+            // Save config to fill missing fields
+            let _ = config.save(config_file_path);
+            Ok(config)
+        },
         Err(error) => {
             match error {
                 LureConfigLoadError::Io(_) => {
