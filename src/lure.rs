@@ -1,11 +1,10 @@
 use std::borrow::Cow;
-use std::error::Error;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{bail, ensure, Context, Ok};
+use anyhow::{bail, ensure, Context};
 
 use base64::engine::general_purpose;
 use base64::Engine;
@@ -70,32 +69,22 @@ impl Lure {
         }
     }
 
-    pub fn get_default_server(&self, hostname: String) -> Option<String> {
+    pub fn get_default_server(&self, hostname: &str) -> Option<String> {
         let hosts = self.config.hosts.clone();
 
-        let host = if hosts.contains_key(hostname.as_str()) {
-            hosts.get(hostname.as_str())
+        let host = if hosts.contains_key(hostname) {
+            hosts.get(hostname)
         } else {
             hosts.get("*")
         };
 
-        if host.is_none() {
-            return None;
-        }
-
-        let default_server = host.unwrap().as_str();
-        return Some(default_server.unwrap().to_string());
+        host.map(|h| h.to_owned())
     }
 
-    pub fn get_server(&self, name: String) -> Option<String> {
+    pub fn get_server(&self, name: &str) -> Option<String> {
         let servers = self.config.servers.clone();
-        let server = servers.get(&name);
-        if server.is_none() {
-            return None;
-        }
-
-        let result = server.unwrap().to_string();
-        return Some(result);
+        servers.get(name)
+            .map(|sv| sv.to_owned())
     }
 
     pub fn get_favicon(&self) -> Option<String> {
@@ -106,24 +95,27 @@ impl Lure {
             return None;
         }
 
-        let favicon = fs::read(favicon_file).unwrap();
-        let favicon_meta = image_meta::load_from_buf(&favicon).unwrap();
+        match fs::read(favicon_file) {
+            Ok(favicon) => {
+                let favicon_meta = image_meta::load_from_buf(&favicon).ok()?;
+                if favicon_meta.dimensions.width != 64 || favicon_meta.dimensions.height != 64 {
+                    return None;
+                };
 
-        if favicon_meta.dimensions.width != 64 || favicon_meta.dimensions.height != 64 {
-            return None;
-        };
-
-        let mut buf = "data:image/png;base64,".to_string();
-        general_purpose::STANDARD.encode_string(favicon, &mut buf);
-
-        Some(buf)
+                let mut buf = "data:image/png;base64,".to_string();
+                general_purpose::STANDARD.encode_string(favicon, &mut buf);
+                
+                Some(buf)
+            },
+            Err(_) => None,
+        }
     }
 
-    pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
+    pub async fn start(&mut self) -> anyhow::Result<()> {
         // Listener config.
         let listener_cfg = self.config.listener.to_owned();
         println!("Preparing socket {}", listener_cfg.bind);
-        let address: SocketAddr = listener_cfg.bind.parse().unwrap();
+        let address: SocketAddr = listener_cfg.bind.parse()?;
         let max_connections = listener_cfg.max_connections;
 
         // Load favicon.
@@ -396,7 +388,7 @@ impl Lure {
         mut client: Connection,
         info: ClientInfo,
     ) -> anyhow::Result<()> {
-        let default_server = self.get_default_server(info.hostname.clone());
+        let default_server = self.get_default_server(&info.hostname);
 
         if default_server.is_none() {
             client
@@ -405,13 +397,14 @@ impl Lure {
             bail!("No host found");
         }
 
-        let default_server_addr = self.get_server(default_server.clone().unwrap());
+        let default_server = default_server.unwrap_or_default();
+        let default_server_addr = self.get_server(&default_server);
 
         if default_server_addr.is_none() {
             let error = format!(
                 "Default server {} for host {} doesnt exist.",
-                default_server.clone().unwrap(),
-                info.hostname.clone()
+                &default_server,
+                &info.hostname
             );
             client
                 .disconnect(error.clone().into_text().color(Color::RED))
@@ -420,25 +413,26 @@ impl Lure {
         }
 
         let server_address: SocketAddr = default_server_addr
-            .unwrap()
+            .unwrap_or_default()
             .replace("\"", "")
             .parse()
             .to_owned()?;
         let connect_result = TcpStream::connect(server_address).await;
 
-        if connect_result.is_err() {
-            let error = format!(
-                "Cannot connect to server {}:\n\n{}",
-                default_server.unwrap(),
-                connect_result.err().unwrap()
-            );
-            client
-                .disconnect(error.clone().into_text().color(Color::RED))
-                .await?;
-            bail!(error);
-        }
-
-        let server_stream = connect_result.unwrap();
+        let server_stream: TcpStream = match TcpStream::connect(server_address).await {
+            Ok(stream) => stream,
+            Err(_) => {
+                let error = format!(
+                    "Cannot connect to server {}:\n\n{:?}",
+                    &default_server,
+                    connect_result.err()
+                );
+                client
+                    .disconnect(error.clone().into_text().color(Color::RED))
+                    .await?;
+                bail!(error);
+            },
+        };
 
         if let Err(e) = server_stream.set_nodelay(true) {
             eprintln!("Failed to set TCP_NODELAY: {e}");
@@ -457,9 +451,9 @@ impl Lure {
 
         let handshake_server_address = match self.config.proxy.player_forward_mode.as_str() {
             "bungeecord" => format!(
-                "{}\0{}\0{}\0{}",
+                "{}\0{:?}\0{}\0{}",
                 server_address.ip().to_string(),
-                client.address.to_string().split(":").next().unwrap(),
+                client.address.to_string().split(":").next(),
                 info.uuid,
                 serde_json::to_string(&info.properties)?
             ),
