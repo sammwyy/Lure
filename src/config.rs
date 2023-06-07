@@ -49,6 +49,7 @@ impl Default for ProxyConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LureConfig {
     #[serde(default)]
     pub listener: ListenerConfig,
@@ -58,6 +59,8 @@ pub struct LureConfig {
     pub hosts: HashMap<String, String>,
     #[serde(default = "LureConfig::default_servers")]
     pub servers: HashMap<String, String>,
+    #[serde(flatten)]
+    pub other_fields: HashMap<String, toml::value::Value>,
 }
 
 impl Default for LureConfig {
@@ -67,6 +70,7 @@ impl Default for LureConfig {
             proxy: Default::default(),
             hosts: Self::default_hosts(),
             servers: Self::default_servers(),
+            other_fields: Default::default()
         }
     }
 }
@@ -84,9 +88,14 @@ impl LureConfig {
         servers
     }
 
-    pub fn load (path: &str) -> anyhow::Result<Self> {
-        let raw = fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&raw)?;
+    pub fn load (path: &str) -> anyhow::Result<Self, LureConfigLoadError> {
+        let raw = fs::read_to_string(path).map_err(|err| LureConfigLoadError::Io(err))?;
+        let config: Self = toml::from_str(&raw).map_err(|err| LureConfigLoadError::Parse(err))?;
+
+        for field in &config.other_fields {
+            println!("Unknown configuration '{}' with value {:?}", field.0, field.1);
+        }
+
         Ok(config)
     }
 
@@ -96,4 +105,9 @@ impl LureConfig {
         file.write_all(config_str.as_bytes())?;
         Ok(())
     }
+}
+
+pub enum LureConfigLoadError {
+    Io(std::io::Error),
+    Parse(toml::de::Error)
 }
