@@ -88,7 +88,7 @@ impl Connection {
             self.dec.queue_bytes(buf);
         }
 
-        let pkt: P = self.dec.try_next_packet()?.unwrap();
+        let pkt: P = self.dec.try_next_packet()?.expect("Packet was None");
         self.enc.append_packet(&pkt)?;
 
         let bytes = self.enc.take();
